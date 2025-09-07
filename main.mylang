@@ -1,0 +1,207 @@
+// <https://www.youtube.com/watch?v=8yo4JfC-Qtw>
+
+std :: #import "std";
+libc :: #import "libc";
+
+gl :: #import "../mylang/lib/std/bindgen/libGL.mylang";
+glfw3 :: #import "../mylang/lib/std/bindgen/libglfw3.mylang";
+math :: #import "../mylang/lib/std/bindgen/libm.mylang";
+time :: #import "../mylang/lib/std/bindgen/libtime.mylang";
+
+/*
+#define GL_GLEXT_PROTOTYPES
+#include <GLFW/glfw3.h>
+
+#include <stdlib.h>
+#include <stddef.h>
+#include <stdio.h>
+*/
+
+Vertex :: struct {
+    pos: [2]f32,
+    color: [3]f32,
+};
+
+static vertices := Vertex.[
+    .(.[-0.6, -0.4], .[1, 0, 0]),
+    .(.[ 0.6, -0.4], .[0, 1, 0]),
+    .(.[   0,  0.6], .[0, 0, 1]),
+];
+
+static vertex_shader_text :=
+    \\#version 460
+    \\layout(location = 0) in vec3 vCol;
+    \\layout(location = 1) in vec2 vPos;
+    \\layout(location = 0) uniform mat3 txfm;
+    \\out vec3 color;
+    \\void main()
+    \\{
+    \\    gl_Position = vec4((txfm * vec3(vPos, 1.0)).xy, 0.0, 1.0);
+    \\    color = vCol;
+    \\}
+;
+
+static fragment_shader_text :=
+    \\#version 460
+    \\in vec3 color;
+    \\out vec4 fragment;
+    \\void main()
+    \\{
+    \\    fragment = vec4(color, 1.0);
+    \\}
+;
+
+int :: libc.c_int;
+float :: libc.c_float;
+
+Mat3x3 :: struct {
+    data: [3 * 3]float;
+
+    rotation :: (angle: float) -> {
+        cos := math.cosf(angle);
+        sin := math.sinf(angle);
+        return Mat3x3.(.[
+            cos, -sin, 0,
+            sin,  cos, 0,
+              0,    0, 1,
+        ])
+    }
+
+    translation :: (x: float, y: float) -> Mat3x3.(.[
+        1, 0, x,
+        0, 1, y,
+        0, 0, 1,
+    ]);
+
+    mul :: (a: Mat3x3, b: Mat3x3) -> {
+        mut ret: Mat3x3;
+
+        for row in 0.as(int)..3 for col in 0.as(int)..3 {
+            ret.data[row * 3 + col] = a.row(row).dot(b.col(col));
+        }
+
+        return ret;
+    }
+
+    chain :: (a: Mat3x3, b: Mat3x3) -> b.mul(a);
+
+    row :: (self: Mat3x3, row: int) -> Vec3.(.[self.data[3 * row], self.data[3 * row + 1], self.data[3 * row + 2]]);
+    col :: (self: Mat3x3, col: int) -> Vec3.(.[self.data[col], self.data[3 + col], self.data[6 + col]]);
+}
+
+Vec3 :: struct {
+    data: [3]float;
+
+    dot :: (a: Vec3, b: Vec3) -> {
+        mut ret: float = 0;
+        for idx in 0..3
+            ret += a.data[idx] * b.data[idx];
+        ret
+    }
+}
+
+error_callback :: (error: int, description: *u8) -> {
+    libc.fprintf(libc.stderr, "OpenGL Error: %s\n".ptr, xx description);
+}
+
+main :: -> {
+    glfw3.setErrorCallback(error_callback);
+
+    if glfw3.init() != glfw3.TRUE then libc.exit(EXIT_FAILURE);
+    defer glfw3.terminate();
+
+    glfw3.windowHint(glfw3.CONTEXT_VERSION_MAJOR, 4);
+    glfw3.windowHint(glfw3.CONTEXT_VERSION_MINOR, 6);
+    glfw3.windowHint(glfw3.OPENGL_PROFILE, glfw3.OPENGL_CORE_PROFILE);
+    glfw3.windowHint(glfw3.FOCUSED, glfw3.FALSE);
+    //glfw3.windowHint(glfw3.TRANSPARENT_FRAMEBUFFER, glfw3.TRUE);
+
+    window := glfw3.createWindow(500, 500, "OpenGL Triangle".ptr, nil, nil);
+    defer glfw3.destroyWindow(window);
+    if window == nil {
+        glfw3.terminate();
+        libc.exit(EXIT_FAILURE);
+    }
+
+    glfw3.makeContextCurrent(window);
+    glfw3.swapInterval(1);
+
+    // NOTE: OpenGL error checks have been omitted for brevity
+
+    mut vertex_buffer: gl.GLuint;
+    gl.genBuffers(1, &mut vertex_buffer);
+    gl.bindBuffer(gl.ARRAY_BUFFER, vertex_buffer);
+    gl.bufferData(gl.ARRAY_BUFFER, #sizeof_val(vertices), &vertices, gl.STATIC_DRAW);
+
+    vertex_shader := gl.createShader(gl.VERTEX_SHADER);
+    gl.shaderSource(vertex_shader, 1, &vertex_shader_text.ptr, NULL);
+    gl.compileShader(vertex_shader);
+
+    fragment_shader := gl.createShader(gl.FRAGMENT_SHADER);
+    gl.shaderSource(fragment_shader, 1, &fragment_shader_text.ptr, NULL);
+    gl.compileShader(fragment_shader);
+
+    program := gl.createProgram();
+    gl.attachShader(program, vertex_shader);
+    gl.attachShader(program, fragment_shader);
+    gl.linkProgram(program);
+
+    vpos_location: u32 = 1;
+    vcol_location: u32 = 0;
+    txfm_location: i32 = 0;
+
+    mut vertex_array: gl.GLuint;
+    gl.genVertexArrays(1, &mut vertex_array);
+    gl.bindVertexArray(vertex_array);
+    gl.enableVertexAttribArray(vpos_location);
+    gl.vertexAttribPointer(vpos_location, 2, gl.FLOAT, gl.FALSE, #sizeof(Vertex), xx #offsetof(Vertex, pos));
+    gl.enableVertexAttribArray(vcol_location);
+    gl.vertexAttribPointer(vcol_location, 3, gl.FLOAT, gl.FALSE, #sizeof(Vertex), xx #offsetof(Vertex, color));
+
+    mut angle: float = 0;
+
+    mut last := now();
+    while glfw3.windowShouldClose(window) != glfw3.TRUE {
+        now := now();
+        defer last = now;
+
+        delta_time := time_secdiff(last, now);
+        angle += 2 * math.PI * delta_time;
+        angle = math.fmodf(angle, 2 * math.PI);
+
+        mut width: libc.c_int;
+        mut height: libc.c_int;
+        glfw3.getFramebufferSize(window, &mut width, &mut height);
+        //ratio := width.as(f32) / height.as(f32);
+
+        gl.viewport(0, 0, width, height);
+        gl.clear(gl.COLOR_BUFFER_BIT);
+
+        gl.useProgram(program);
+        gl.bindVertexArray(vertex_array);
+
+        txfm := Mat3x3.rotation(angle)
+            .chain(Mat3x3.translation(0, 1.0));
+
+        gl.uniformMatrix3fv(txfm_location, 1, gl.TRUE, xx &txfm.data);
+        gl.drawArrays(gl.TRIANGLES, 0, 3);
+
+        glfw3.swapBuffers(window);
+        glfw3.pollEvents();
+    }
+}
+
+EXIT_FAILURE :: 1;
+NULL :: nil;
+
+now :: -> {
+    mut now: time.structs.timespec;
+    time.clock_gettime(time.CLOCK_MONOTONIC, &mut now);
+    now
+}
+
+time_secdiff :: (last: time.structs.timespec, now: time.structs.timespec) -> {
+    mut ret := (now.tv_sec - last.tv_sec).as(float);
+    ret += (now.tv_nsec - last.tv_nsec).as(float) / 1_000_000_000;
+    ret
+}
