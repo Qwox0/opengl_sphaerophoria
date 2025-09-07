@@ -18,25 +18,25 @@ time :: #import "../mylang/lib/std/bindgen/libtime.mylang";
 */
 
 Vertex :: struct {
-    pos: [2]f32,
+    pos: [3]f32,
     color: [3]f32,
 };
 
 static vertices := Vertex.[
-    .(.[-0.6, -0.4], .[1, 0, 0]),
-    .(.[ 0.6, -0.4], .[0, 1, 0]),
-    .(.[   0,  0.6], .[0, 0, 1]),
+    .(.[-0.6, -0.4, 0], .[1, 0, 0]),
+    .(.[ 0.6, -0.4, 0], .[0, 1, 0]),
+    .(.[   0,  0.6, 0], .[0, 0, 1]),
 ];
 
 static vertex_shader_text :=
     \\#version 460
     \\layout(location = 0) in vec3 vCol;
-    \\layout(location = 1) in vec2 vPos;
-    \\layout(location = 0) uniform mat3 txfm;
+    \\layout(location = 1) in vec3 vPos;
+    \\layout(location = 0) uniform mat4 txfm;
     \\out vec3 color;
     \\void main()
     \\{
-    \\    gl_Position = vec4((txfm * vec3(vPos, 1.0)).xy, 0.0, 1.0);
+    \\    gl_Position = txfm * vec4(vPos, 1.0);
     \\    color = vCol;
     \\}
 ;
@@ -54,47 +54,57 @@ static fragment_shader_text :=
 int :: libc.c_int;
 float :: libc.c_float;
 
-Mat3x3 :: struct {
-    data: [3 * 3]float;
+Mat4x4 :: struct {
+    data: [4 * 4]float;
 
-    rotation :: (angle: float) -> {
+    rotation_z :: (angle: float) -> {
         cos := math.cosf(angle);
         sin := math.sinf(angle);
-        return Mat3x3.(.[
-            cos, -sin, 0,
-            sin,  cos, 0,
-              0,    0, 1,
+        return Mat4x4.(.[
+            cos, -sin, 0, 0,
+            sin,  cos, 0, 0,
+              0,    0, 1, 0,
+              0,    0, 0, 1,
         ])
     }
 
-    translation :: (x: float, y: float) -> Mat3x3.(.[
-        1, 0, x,
-        0, 1, y,
-        0, 0, 1,
+    translation :: (x: float, y: float, z: float) -> Mat4x4.(.[
+        1, 0, 0, x,
+        0, 1, 0, y,
+        0, 0, 1, z,
+        0, 0, 0, 1,
     ]);
 
-    mul :: (a: Mat3x3, b: Mat3x3) -> {
-        mut ret: Mat3x3;
-
-        for row in 0.as(int)..3 for col in 0.as(int)..3 {
-            ret.data[row * 3 + col] = a.row(row).dot(b.col(col));
+    mul :: (a: Mat4x4, b: Mat4x4) -> {
+        mut ret: Mat4x4;
+        for row in 0.as(int)..4 for col in 0.as(int)..4 {
+            ret.data[row * 4 + col] = a.row(row).dot(b.col(col));
         }
-
-        return ret;
+        ret
     }
 
-    chain :: (a: Mat3x3, b: Mat3x3) -> b.mul(a);
+    chain :: (a: Mat4x4, b: Mat4x4) -> b.mul(a);
 
-    row :: (self: Mat3x3, row: int) -> Vec3.(.[self.data[3 * row], self.data[3 * row + 1], self.data[3 * row + 2]]);
-    col :: (self: Mat3x3, col: int) -> Vec3.(.[self.data[col], self.data[3 + col], self.data[6 + col]]);
+    row :: (self: Mat4x4, row: int) -> Vec4.(.[
+        self.data[4 * row + 0],
+        self.data[4 * row + 1],
+        self.data[4 * row + 2],
+        self.data[4 * row + 3],
+    ]);
+    col :: (self: Mat4x4, col: int) -> Vec4.(.[
+        self.data[4 * 0 + col],
+        self.data[4 * 1 + col],
+        self.data[4 * 2 + col],
+        self.data[4 * 3 + col],
+    ]);
 }
 
-Vec3 :: struct {
-    data: [3]float;
+Vec4 :: struct {
+    data: [4]float;
 
-    dot :: (a: Vec3, b: Vec3) -> {
+    dot :: (a: Vec4, b: Vec4) -> {
         mut ret: float = 0;
-        for idx in 0..3
+        for idx in 0..4
             ret += a.data[idx] * b.data[idx];
         ret
     }
@@ -180,10 +190,10 @@ main :: -> {
         gl.useProgram(program);
         gl.bindVertexArray(vertex_array);
 
-        txfm := Mat3x3.rotation(angle)
-            .chain(Mat3x3.translation(0, 1.0));
+        txfm := Mat4x4.translation(0, 1.0, 0)
+            .chain(Mat4x4.rotation_z(angle));
 
-        gl.uniformMatrix3fv(txfm_location, 1, gl.TRUE, xx &txfm.data);
+        gl.uniformMatrix4fv(txfm_location, 1, gl.TRUE, xx &txfm.data);
         gl.drawArrays(gl.TRIANGLES, 0, 3);
 
         glfw3.swapBuffers(window);
